@@ -14,8 +14,7 @@ ifeq ($(TARGET), stm32f1)
   -fno-builtin \
   -ffunction-sections \
   -fdata-sections \
-  -funsigned-char \
-  -MMD
+  -funsigned-char
 	LIBS += -ldl
 	BUILD_TYPE := micro
 endif

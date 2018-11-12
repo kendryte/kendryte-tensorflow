@@ -26,10 +26,11 @@ TARGET_ARCH := $(HOST_ARCH)
 
 INCLUDES := \
 -I. \
+-I$(MAKEFILE_DIR)/../../../../ \
 -I$(MAKEFILE_DIR)/../../../../../ \
--I$(MAKEFILE_DIR)/../../../../../../ \
 -I$(MAKEFILE_DIR)/downloads/ \
 -I$(MAKEFILE_DIR)/downloads/eigen \
+-I$(MAKEFILE_DIR)/downloads/eigen/Eigen \
 -I$(MAKEFILE_DIR)/downloads/absl \
 -I$(MAKEFILE_DIR)/downloads/gemmlowp \
 -I$(MAKEFILE_DIR)/downloads/neon_2_sse \
@@ -51,14 +52,20 @@ LIBS := \
 # There are no rules for compiling objects for the host system (since we don't
 # generate things like the protobuf compiler that require that), so all of
 # these settings are for the target compiler.
-CXXFLAGS := -O3 -DNDEBUG
+CXXFLAGS := -Os
 CCFLAGS := ${CXXFLAGS}
-CXXFLAGS += --std=c++11
+CXXFLAGS += --std=gnu++17
 CFLAGS :=
 LDOPTS := -L/usr/local/lib
 ARFLAGS := -r
 TARGET_TOOLCHAIN_PREFIX :=
 CC_PREFIX :=
+
+# These target-specific makefiles should modify or replace options like
+# CXXFLAGS or LIBS to work for a specific targetted architecture. All logic
+# based on platforms or architectures should happen within these files, to
+# keep this main makefile focused on the sources and dependencies.
+include $(wildcard $(MAKEFILE_DIR)/targets/*_makefile.inc)
 
 # This library is the main target for this makefile. It will contain a minimal
 # runtime that can be linked in to other programs.
@@ -114,6 +121,11 @@ CORE_CC_EXCLUDE_SRCS += \
 tensorflow/lite/mmap_allocation.cc \
 tensorflow/lite/nnapi_delegate.cc
 endif
+ifeq ($(TARGET),kendryte)
+CORE_CC_EXCLUDE_SRCS += \
+tensorflow/lite/mmap_allocation.cc \
+tensorflow/lite/nnapi_delegate.cc
+endif
 # Filter out all the excluded files.
 TF_LITE_CC_SRCS := $(filter-out $(CORE_CC_EXCLUDE_SRCS), $(CORE_CC_ALL_SRCS))
 
@@ -126,12 +138,6 @@ BENCHMARK_ALL_SRCS := $(TFLITE_CC_SRCS) \
 BENCHMARK_SRCS := $(filter-out \
 	$(wildcard $(BENCHMARK_SRCS_DIR)/*_test.cc), \
     $(BENCHMARK_ALL_SRCS))
-
-# These target-specific makefiles should modify or replace options like
-# CXXFLAGS or LIBS to work for a specific targetted architecture. All logic
-# based on platforms or architectures should happen within these files, to
-# keep this main makefile focused on the sources and dependencies.
-include $(wildcard $(MAKEFILE_DIR)/targets/*_makefile.inc)
 
 ALL_SRCS := \
 	$(MINIMAL_SRCS) \
