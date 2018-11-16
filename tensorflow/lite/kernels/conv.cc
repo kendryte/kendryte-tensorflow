@@ -27,6 +27,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/optimized/cblas_conv.h"
 #include "tensorflow/lite/kernels/internal/optimized/multithreaded_conv.h"
 #include "tensorflow/lite/kernels/internal/optimized/optimized_ops.h"
+#include "tensorflow/lite/kernels/internal/kpu/kpu_ops.h"
 #include "tensorflow/lite/kernels/internal/quantization_util.h"
 #include "tensorflow/lite/kernels/internal/reference/reference_ops.h"
 #include "tensorflow/lite/kernels/internal/tensor.h"
@@ -52,6 +53,8 @@ enum KernelType {
   // Accelerate Framework), and it's slow when falling back to naive
   // implementation.
   kCblasOptimized,
+  // Using Kendryte KPU
+  kKpuOptimized
 };
 
 const int kTensorNotAllocated = -1;
@@ -415,8 +418,28 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
   auto filter_offset = -filter->params.zero_point;
   auto output_offset = output->params.zero_point;
 
+  auto input_shape = GetTensorShape(input);
+  auto filter_shape = GetTensorShape(filter);
+
+  const int input_height = input_shape.Dims(1);
+  const int input_width = input_shape.Dims(2);
+  const int filter_height = filter_shape.Dims(1);
+  const int filter_width = filter_shape.Dims(2);
+  const uint32_t input_depth = MatchingDim(input_shape, 3, filter_shape, 3);
+
   KernelType effective_kernel_type;
-  if ((kernel_type == kMultithreadOptimized ||
+  if ((kernel_type == kKpuOptimized) &&
+      (params->dilation_width_factor != 1 ||
+       params->dilation_height_factor != 1 ||
+       params->stride_width != 1 ||
+       params->stride_height != 1 ||
+       input_height < 4 || input_width < 4 ||
+       filter_height != filter_width ||
+       (filter_height != 1 /*&& filter_height != 3*/) ||
+       (input_width < 8) || input_depth > 256)) {
+    effective_kernel_type = kGenericOptimized;
+  }
+  else if ((kernel_type == kMultithreadOptimized ||
        kernel_type == kCblasOptimized) &&
       (params->dilation_width_factor != 1 ||
        params->dilation_height_factor != 1)) {
@@ -472,6 +495,30 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       op_params.quantized_activation_min = data->output_activation_min;
       op_params.quantized_activation_max = data->output_activation_max;
       optimized_ops::Conv(
+          op_params, GetTensorShape(input), GetTensorData<uint8_t>(input),
+          GetTensorShape(filter), GetTensorData<uint8_t>(filter),
+          GetTensorShape(bias), GetTensorData<int32_t>(bias),
+          GetTensorShape(output), GetTensorData<uint8_t>(output),
+          GetTensorShape(im2col), GetTensorData<uint8_t>(im2col), gemm_context);
+      break;
+    }
+    case kKpuOptimized: {
+      ConvParams op_params;
+      op_params.padding_type = PaddingType::kSame;
+      op_params.padding_values.width = data->padding.width;
+      op_params.padding_values.height = data->padding.height;
+      op_params.stride_width = params->stride_width;
+      op_params.stride_height = params->stride_height;
+      op_params.dilation_width_factor = params->dilation_width_factor;
+      op_params.dilation_height_factor = params->dilation_height_factor;
+      op_params.input_offset = input_offset;
+      op_params.weights_offset = filter_offset;
+      op_params.output_offset = output_offset;
+      op_params.output_multiplier = data->output_multiplier;
+      op_params.output_shift = -data->output_shift;
+      op_params.quantized_activation_min = data->output_activation_min;
+      op_params.quantized_activation_max = data->output_activation_max;
+      kpu_ops::Conv(
           op_params, GetTensorShape(input), GetTensorData<uint8_t>(input),
           GetTensorShape(filter), GetTensorData<uint8_t>(filter),
           GetTensorShape(bias), GetTensorData<int32_t>(bias),
@@ -597,7 +644,8 @@ void EvalHybrid(TfLiteContext* context, TfLiteNode* node,
     case kReference:
     case kGenericOptimized:
     case kMultithreadOptimized:
-    case kCblasOptimized: {
+    case kCblasOptimized:
+    case kKpuOptimized: {
       // There is only one implementation for hybrid kernel. Note
       // this does not make use of gemmlowp nor supports multithreading.
       ConvParams op_params;
@@ -699,9 +747,17 @@ TfLiteRegistration* Register_CONVOLUTION_CBLAS_OPT() {
   return &r;
 }
 
+TfLiteRegistration* Register_CONVOLUTION_KPU_OPT() {
+  static TfLiteRegistration r = {conv::Init, conv::Free, conv::Prepare,
+                                 conv::Eval<conv::kKpuOptimized>};
+  return &r;
+}
+
 TfLiteRegistration* Register_CONV_2D() {
 #ifdef TFLITE_USE_APPLE_ACCELERATE_FOR_CONV
   return Register_CONVOLUTION_CBLAS_OPT();
+#elif defined(__riscv)
+  return Register_CONVOLUTION_KPU_OPT();
 #else
   return Register_CONVOLUTION_MULTITHREADED_OPT();
 #endif

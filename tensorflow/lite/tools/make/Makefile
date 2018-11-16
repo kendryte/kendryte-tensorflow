@@ -36,6 +36,7 @@ INCLUDES := \
 -I$(MAKEFILE_DIR)/downloads/neon_2_sse \
 -I$(MAKEFILE_DIR)/downloads/farmhash/src \
 -I$(MAKEFILE_DIR)/downloads/flatbuffers/include \
+-I$(MAKEFILE_DIR)/downloads/kendryte/include \
 -I$(OBJDIR)
 # This is at the end so any globally-installed frameworks like protobuf don't
 # override local versions in the source tree.
@@ -52,7 +53,7 @@ LIBS := \
 # There are no rules for compiling objects for the host system (since we don't
 # generate things like the protobuf compiler that require that), so all of
 # these settings are for the target compiler.
-CXXFLAGS := -Os
+CXXFLAGS := -O3
 CCFLAGS := ${CXXFLAGS}
 CXXFLAGS += --std=gnu++17
 CFLAGS :=
@@ -99,6 +100,7 @@ $(wildcard tensorflow/lite/kernels/*.cc) \
 $(wildcard tensorflow/lite/kernels/internal/*.cc) \
 $(wildcard tensorflow/lite/kernels/internal/optimized/*.cc) \
 $(wildcard tensorflow/lite/kernels/internal/reference/*.cc) \
+$(wildcard tensorflow/lite/kernels/internal/kpu/*.cc) \
 $(PROFILER_SRCS) \
 $(wildcard tensorflow/lite/kernels/*.c) \
 $(wildcard tensorflow/lite/kernels/internal/*.c) \
