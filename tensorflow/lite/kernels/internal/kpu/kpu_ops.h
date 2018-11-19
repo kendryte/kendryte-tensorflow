@@ -2010,29 +2010,50 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
   const uint32_t filter_width = filter_shape.Dims(2);
   const uint32_t output_height = output_shape.Dims(1);
   const uint32_t output_width = output_shape.Dims(2);
+  const uint32_t stride_width = params.stride_width;
 
-  uint32_t row_padding;
-  uint32_t row_group;
-  uint32_t row_length;
+  uint32_t in_row_padding;
+  uint32_t in_row_group;
+  uint32_t in_row_length;
 
   if (input_width <= 16) {
-    row_padding = 16;
-    row_group = 4;
-    row_length = 1;
+    in_row_padding = 16;
+    in_row_group = 4;
+    in_row_length = 1;
   }
   else if (input_width <= 32) {
-    row_padding = 32;
-    row_group = 2;
-    row_length = 1;
+    in_row_padding = 32;
+    in_row_group = 2;
+    in_row_length = 1;
   }
   else {
-    row_padding = 64;
-    row_group = 1;
-    row_length = (input_width + 63) / 64;
+    in_row_padding = 64;
+    in_row_group = 1;
+    in_row_length = (input_width + 63) / 64;
+  }
+  
+  uint32_t out_row_padding;
+  uint32_t out_row_group;
+  uint32_t out_row_length;
+
+  if (output_width <= 16) {
+    out_row_padding = 16;
+    out_row_group = 4;
+    out_row_length = 1;
+  }
+  else if (output_width <= 32) {
+    out_row_padding = 32;
+    out_row_group = 2;
+    out_row_length = 1;
+  }
+  else {
+    out_row_padding = 64;
+    out_row_group = 1;
+    out_row_length = (output_width + 63) / 64;
   }
 
-  const uint32_t in_channels_of_group = std::min(input_depth, row_group);
-  const uint32_t out_channels_of_group = std::min(output_depth, row_group);
+  const uint32_t in_channels_of_group = std::min(input_depth, in_row_group);
+  const uint32_t out_channels_of_group = std::min(output_depth, out_row_group);
   const uint32_t out_channel_kernel_size = filter_width * filter_height * input_depth;
   const uint32_t one_time_kernel_out_channels = std::min(output_depth, 16 * 1024 / out_channel_kernel_size);
   const uint32_t load_time = static_cast<uint32_t>(std::ceil((double)output_depth / one_time_kernel_out_channels));
@@ -2053,7 +2074,7 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
   };
   layer.image_addr.data = {
      .image_src_addr = (uint64_t)0x0,
-     .image_dst_addr = (uint64_t)(0x8000 - (64 * output_height * output_depth / out_channels_of_group + 63) / 64)
+     .image_dst_addr = (uint64_t)(0x8000 - (64 * out_row_length * output_height * output_depth / out_channels_of_group + 63) / 64)
   };
   layer.image_channel_num.data = {
      .i_ch_num = input_depth - 1,
@@ -2067,9 +2088,9 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
      .o_col_high = output_height - 1
   };
   layer.kernel_pool_type_cfg.data = {
-     .kernel_type = 0,
+     .kernel_type = filter_width == 3 ? 1U : 0,
      .pad_type = 0,
-     .pool_type = 0,
+     .pool_type = stride_width == 2 ? 5U : 0,
      .first_stride = 0,
      .bypass_conv = 0,
      .load_para = 1,
@@ -2088,17 +2109,17 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
      .coef_row_offset = 0
   };
   layer.kernel_calc_type_cfg.data = {
-     .channel_switch_addr = row_length * input_height,
-     .row_switch_addr = row_length,
+     .channel_switch_addr = in_row_length * input_height,
+     .row_switch_addr = in_row_length,
      .coef_size = 0,
-     .coef_group = row_group,
+     .coef_group = in_row_group,
      .load_act = 1,
      .active_addr = 0
   };
   layer.write_back_cfg.data = {
-     .wb_channel_switch_addr = row_length * output_height,
-     .wb_row_switch_addr = row_length,
-     .wb_group = row_group
+     .wb_channel_switch_addr = out_row_length * output_height,
+     .wb_row_switch_addr = out_row_length,
+     .wb_group = out_row_group
   };
   layer.conv_value.data = {
      .shr_w = 0,
@@ -2107,7 +2128,7 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
      .arg_x = static_cast<uint64_t>(filter_offset)
   };
   layer.conv_value2.data = {
-     .arg_add = static_cast<uint64_t>(input_offset * filter_offset)
+     .arg_add = static_cast<uint64_t>(input_offset * filter_offset * filter_width * filter_height)
   };
   layer.dma_parameter.data = {
      .send_data_out = 1,
@@ -2124,7 +2145,7 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
     kpu_bn_table[out_channel].batchnorm.data = {.norm_mul = mul,.norm_add = static_cast<uint64_t>(add),.norm_shift = 15 };
   }
 
-  auto kernels = std::make_unique<uint8_t[]>(input_depth * output_depth);
+  auto kernels = std::make_unique<uint8_t[]>(filter_width * filter_height * input_depth * output_depth);
   auto inputs = reinterpret_cast<uint8_t*>(AI_IO_BASE_ADDR);
 
   size_t output_size = ((layer.dma_parameter.data.dma_total_byte + 1) + 7) / 8 * 8;
@@ -2182,9 +2203,9 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
     // init inputs
     {
       for (int in_channel = 0; in_channel < input_depth; ++in_channel) {
-        auto channel_origin = inputs + in_channel / row_group * row_length * input_height * 64 + in_channel % row_group * row_padding;
+        auto channel_origin = inputs + in_channel / in_row_group * in_row_length * input_height * 64 + in_channel % in_row_group * in_row_padding;
         for (int in_y = 0; in_y < input_height; ++in_y) {
-          auto y_origin = channel_origin + in_y * row_length * 64;
+          auto y_origin = channel_origin + in_y * in_row_length * 64;
           for (int in_x = 0; in_x < input_width; ++in_x) {
               y_origin[in_x] = input_data[Offset(input_shape, batch, in_y,
                   in_x, in_channel)];

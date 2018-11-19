@@ -433,11 +433,11 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
   if ((kernel_type == kKpuOptimized) &&
       (params->dilation_width_factor != 1 ||
        params->dilation_height_factor != 1 ||
-       params->stride_width != 1 ||
-       params->stride_height != 1 ||
+       params->stride_width != params->stride_height ||
+       (params->stride_width != 1 && params->stride_width != 2) ||
        input_height < 4 || input_width < 4 ||
        filter_height != filter_width ||
-       (filter_height != 1 /*&& filter_height != 3*/))) {
+       (filter_height != 1 && filter_height != 3))) {
     effective_kernel_type = kGenericOptimized;
   }
   else if ((kernel_type == kMultithreadOptimized ||
