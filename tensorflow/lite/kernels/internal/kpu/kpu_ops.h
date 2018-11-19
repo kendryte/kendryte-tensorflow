@@ -2033,8 +2033,11 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
 
   const uint32_t in_channels_of_group = std::min(input_depth, row_group);
   const uint32_t out_channels_of_group = std::min(output_depth, row_group);
+  const uint32_t out_channel_kernel_size = filter_width * filter_height * input_depth;
+  const uint32_t one_time_kernel_out_channels = std::min(output_depth, 16 * 1024 / out_channel_kernel_size);
+  const uint32_t load_time = static_cast<uint32_t>(std::ceil((double)output_depth / one_time_kernel_out_channels));
 
-  printk("kpu conv: x %d >> %d, i: %dx%d o:%dx%d\n", output_multiplier, -output_shift, input_width, input_height, output_width, output_height);
+  printk("kpu conv: x %d >> %d, i: %dx%d o:%dx%d, %d, %d, %d\n", output_multiplier, -output_shift, input_width, input_height, output_width, output_height, out_channel_kernel_size, one_time_kernel_out_channels, load_time);
 #if KPU_DEBUG
   printk("io: %d, oo: %d\n ", input_offset, output_offset);
 #endif
@@ -2055,7 +2058,7 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
   layer.image_channel_num.data = {
      .i_ch_num = input_depth - 1,
      .o_ch_num = output_depth - 1,
-     .o_ch_num_coef = output_depth - 1
+     .o_ch_num_coef = one_time_kernel_out_channels - 1
   };
   layer.image_size.data = {
      .i_row_wid = input_width - 1,
@@ -2076,8 +2079,8 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
   };
   layer.kernel_load_cfg.data = {
      .load_coor = 1,
-     .load_time = 0,
-     .para_size = input_depth * output_depth,
+     .load_time = load_time - 1,
+     .para_size = out_channel_kernel_size * one_time_kernel_out_channels,
      .para_start_addr = 0
   };
   layer.kernel_offset.data = {
@@ -2168,6 +2171,11 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
         }
       }
     }
+#if KPU_DEBUG
+    printk("kernels\n");
+    for (size_t i = 0; i < 64; i++)
+        printk("%p: %d ", kernels.get(), kernels[i]);
+#endif
   }
 
   for (int batch = 0; batch < batches; ++batch) {
@@ -2245,7 +2253,6 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
     printk("outputs\n");
     for (size_t i = 0; i < 64; i++)
         printk("%d ", output_data[i]);
-    while (1);
 #endif
     gettimeofday(&tv2, NULL);
     printk("\nconv used %dms.\n", (int)((tv2.tv_sec * 1000 + tv2.tv_usec / 1e3) - (tv.tv_sec * 1000 + tv.tv_usec / 1e3)));
@@ -2270,6 +2277,12 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
   TFLITE_DCHECK_LE(output_activation_min, output_activation_max);
 
   printk("io: %d, ko: %d, oo: %d\n ", input_offset, filter_offset, output_offset);
+
+#if KPU_DEBUG
+  printk("inputs\n");
+  for (size_t i = 0; i < 64; i++)
+      printk("%d ", input_data[i]);
+#endif
 
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(filter_shape.DimensionsCount(), 4);
@@ -2331,7 +2344,6 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
     printk("outputs\n");
     for (size_t i = 0; i < 64; i++)
         printk("%d ", output_data[i]);
-    while (1);
   }
 #endif
 }

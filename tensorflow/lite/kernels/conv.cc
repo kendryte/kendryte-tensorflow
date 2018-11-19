@@ -427,6 +427,8 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
   const int filter_width = filter_shape.Dims(2);
   const uint32_t input_depth = MatchingDim(input_shape, 3, filter_shape, 3);
 
+  static int time = 0;
+
   KernelType effective_kernel_type;
   if ((kernel_type == kKpuOptimized) &&
       (params->dilation_width_factor != 1 ||
@@ -435,8 +437,7 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
        params->stride_height != 1 ||
        input_height < 4 || input_width < 4 ||
        filter_height != filter_width ||
-       (filter_height != 1 /*&& filter_height != 3*/) ||
-       (input_width < 8) || input_depth > 256)) {
+       (filter_height != 1 /*&& filter_height != 3*/))) {
     effective_kernel_type = kGenericOptimized;
   }
   else if ((kernel_type == kMultithreadOptimized ||
@@ -503,6 +504,7 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       break;
     }
     case kKpuOptimized: {
+      time++;
       ConvParams op_params;
       op_params.padding_type = PaddingType::kSame;
       op_params.padding_values.width = data->padding.width;
