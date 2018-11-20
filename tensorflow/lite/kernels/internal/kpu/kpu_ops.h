@@ -2058,8 +2058,8 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
   const uint32_t one_time_kernel_out_channels = std::min(output_depth, 16 * 1024 / out_channel_kernel_size);
   const uint32_t load_time = static_cast<uint32_t>(std::ceil((double)output_depth / one_time_kernel_out_channels));
 
-  printk("kpu conv: x %d >> %d, i: %dx%d o:%dx%d, %d, %d, %d\n", output_multiplier, -output_shift, input_width, input_height, output_width, output_height, out_channel_kernel_size, one_time_kernel_out_channels, load_time);
 #if KPU_DEBUG
+  printk("kpu conv: x %d >> %d, i: %dx%d o:%dx%d, %d, %d, %d\n", output_multiplier, -output_shift, input_width, input_height, output_width, output_height, out_channel_kernel_size, one_time_kernel_out_channels, load_time);
   printk("io: %d, oo: %d\n ", input_offset, output_offset);
 #endif
 
@@ -2274,9 +2274,9 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
     printk("outputs\n");
     for (size_t i = 0; i < 64; i++)
         printk("%d ", output_data[i]);
-#endif
     gettimeofday(&tv2, NULL);
     printk("\nconv used %dms.\n", (int)((tv2.tv_sec * 1000 + tv2.tv_usec / 1e3) - (tv.tv_sec * 1000 + tv.tv_usec / 1e3)));
+#endif
   }
 #else
   (void)im2col_data;   // only used in optimized code.

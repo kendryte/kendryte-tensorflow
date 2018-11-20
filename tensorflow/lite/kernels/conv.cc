@@ -54,7 +54,7 @@ enum KernelType {
   // implementation.
   kCblasOptimized,
   // Using Kendryte KPU
-  kKpuOptimized
+  kKpuOptimized,
 };
 
 const int kTensorNotAllocated = -1;
@@ -427,8 +427,6 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
   const int filter_width = filter_shape.Dims(2);
   const uint32_t input_depth = MatchingDim(input_shape, 3, filter_shape, 3);
 
-  static int time = 0;
-
   KernelType effective_kernel_type;
   if ((kernel_type == kKpuOptimized) &&
       (params->dilation_width_factor != 1 ||
@@ -504,7 +502,6 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
       break;
     }
     case kKpuOptimized: {
-      time++;
       ConvParams op_params;
       op_params.padding_type = PaddingType::kSame;
       op_params.padding_values.width = data->padding.width;

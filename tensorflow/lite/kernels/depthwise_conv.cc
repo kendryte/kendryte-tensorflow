@@ -26,6 +26,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/quantization_util.h"
 #include "tensorflow/lite/kernels/internal/reference/depthwiseconv_float.h"
 #include "tensorflow/lite/kernels/internal/reference/depthwiseconv_uint8.h"
+#include "tensorflow/lite/kernels/internal/kpu/depthwiseconv_uint8.h"
 #include "tensorflow/lite/kernels/internal/tensor.h"
 #include "tensorflow/lite/kernels/kernel_util.h"
 #include "tensorflow/lite/kernels/op_macros.h"
@@ -46,6 +47,8 @@ enum KernelType {
   kReference,
   kGenericOptimized,  // Neon-free
   kNeonOptimized,
+  // Using Kendryte KPU
+  kKpuOptimized,
 };
 
 struct OpData {
@@ -216,13 +219,38 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
   auto filter_offset = -filter->params.zero_point;
   auto output_offset = output->params.zero_point;
 
+  auto input_shape = GetTensorShape(input);
+  auto filter_shape = GetTensorShape(filter);
+
+  const int input_height = input_shape.Dims(1);
+  const int input_width = input_shape.Dims(2);
+  const int filter_height = filter_shape.Dims(1);
+  const int filter_width = filter_shape.Dims(2);
+
   void (*depthwise_conv)(const DepthwiseParams&, const RuntimeShape&,
                          const uint8*, const RuntimeShape&, const uint8*,
                          const RuntimeShape&, const int32*, const RuntimeShape&,
                          uint8*);
 
-  if (kernel_type == kReference) {
+  KernelType effective_kernel_type;
+  if ((kernel_type == kKpuOptimized) &&
+      (params->dilation_width_factor != 1 ||
+       params->dilation_height_factor != 1 ||
+       params->stride_width != params->stride_height ||
+       (params->stride_width != 1 /*&& params->stride_width != 2*/) ||
+       input_height < 4 || input_width < 4 ||
+       filter_height != filter_width ||
+       (filter_height != 1 && filter_height != 3))) {
+    effective_kernel_type = kGenericOptimized;
+  } else {
+      effective_kernel_type = kernel_type;
+  }
+
+  if (effective_kernel_type == kReference) {
     depthwise_conv = &reference_ops::DepthwiseConv;
+  }
+  else if (effective_kernel_type == kKpuOptimized) {
+    depthwise_conv = &kpu_ops::DepthwiseConv;
   } else {
     depthwise_conv = &optimized_ops::DepthwiseConv;
   }
@@ -304,9 +332,18 @@ TfLiteRegistration* Register_DEPTHWISE_CONVOLUTION_NEON_OPT() {
   return &r;
 }
 
+TfLiteRegistration* Register_DEPTHWISE_CONVOLUTION_KPU_OPT() {
+  static TfLiteRegistration r = {
+      depthwise_conv::Init, depthwise_conv::Free, depthwise_conv::Prepare,
+      depthwise_conv::Eval<depthwise_conv::kKpuOptimized>};
+  return &r;
+}
+
 TfLiteRegistration* Register_DEPTHWISE_CONV_2D() {
 #ifdef USE_NEON
   return Register_DEPTHWISE_CONVOLUTION_NEON_OPT();
+#elif defined(__riscv)
+  return Register_DEPTHWISE_CONVOLUTION_KPU_OPT();
 #else
   return Register_DEPTHWISE_CONVOLUTION_GENERIC_OPT();
 #endif
