@@ -2090,12 +2090,12 @@ inline void Conv(const ConvParams& params, const RuntimeShape& input_shape,
   layer.kernel_pool_type_cfg.data = {
      .kernel_type = filter_width == 3 ? 1U : 0,
      .pad_type = 0,
-     .pool_type = stride_width == 2 ? 5U : 0,
+     .pool_type = stride_width == 2 ? 6U : 0,
      .first_stride = 0,
      .bypass_conv = 0,
      .load_para = 1,
      .dma_burst_size = 15,
-     .pad_value = 0,
+     .pad_value = static_cast<uint64_t>(input_offset),
      .bwsx_base_addr = 0
   };
   layer.kernel_load_cfg.data = {

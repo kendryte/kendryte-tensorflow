@@ -231,14 +231,14 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
                          const uint8*, const RuntimeShape&, const uint8*,
                          const RuntimeShape&, const int32*, const RuntimeShape&,
                          uint8*);
-
+  static int time = 0;
   KernelType effective_kernel_type;
   if ((kernel_type == kKpuOptimized) &&
       (params->dilation_width_factor != 1 ||
        params->dilation_height_factor != 1 ||
        params->stride_width != params->stride_height ||
-       (params->stride_width != 1 /*&& params->stride_width != 2*/) ||
-       input_height < 4 || input_width < 4 ||
+       (params->stride_width != 1 && params->stride_width != 2) ||
+       input_height < 4 || input_width < 4 || input_width > 32 ||
        filter_height != filter_width ||
        (filter_height != 1 && filter_height != 3))) {
     effective_kernel_type = kGenericOptimized;
@@ -251,6 +251,7 @@ void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
   }
   else if (effective_kernel_type == kKpuOptimized) {
     depthwise_conv = &kpu_ops::DepthwiseConv;
+    time++;
   } else {
     depthwise_conv = &optimized_ops::DepthwiseConv;
   }

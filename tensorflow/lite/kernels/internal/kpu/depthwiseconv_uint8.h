@@ -140,7 +140,7 @@ inline void DepthwiseConv(
   };
   layer.image_addr.data = {
      .image_src_addr = (uint64_t)0x0,
-     .image_dst_addr = (uint64_t)(0x8000 - (64 * out_row_length * output_height * output_depth / out_channels_of_group + 63) / 64)
+     .image_dst_addr = (uint64_t)(0x8000 - (64 * in_row_length * input_height * output_depth / out_channels_of_group + 63) / 64)
   };
   layer.image_channel_num.data = {
      .i_ch_num = input_depth - 1,
@@ -150,13 +150,13 @@ inline void DepthwiseConv(
   layer.image_size.data = {
      .i_row_wid = input_width - 1,
      .i_col_high = input_height - 1,
-     .o_row_wid = output_width - 1,
-     .o_col_high = output_height - 1
+     .o_row_wid = input_width - 1,
+     .o_col_high = input_height - 1
   };
   layer.kernel_pool_type_cfg.data = {
      .kernel_type = filter_width == 3 ? 1U : 0,
      .pad_type = 0,
-     .pool_type = stride_width == 2 ? 5U : 0,
+     .pool_type = 0,
      .first_stride = 0,
      .bypass_conv = 0,
      .load_para = 1,
@@ -183,9 +183,9 @@ inline void DepthwiseConv(
      .active_addr = 0
   };
   layer.write_back_cfg.data = {
-     .wb_channel_switch_addr = out_row_length * output_height,
-     .wb_row_switch_addr = out_row_length,
-     .wb_group = out_row_group
+     .wb_channel_switch_addr = in_row_length * input_height,
+     .wb_row_switch_addr = in_row_length,
+     .wb_group = in_row_group
   };
   layer.conv_value.data = {
      .shr_w = 0,
@@ -198,8 +198,8 @@ inline void DepthwiseConv(
   };
   layer.dma_parameter.data = {
      .send_data_out = 1,
-     .channel_byte_num = output_width * output_height - 1,
-     .dma_total_byte = (output_width * output_height * output_depth) - 1
+     .channel_byte_num = input_width * input_height - 1,
+     .dma_total_byte = (input_width * input_height * output_depth) - 1
   };
 
   auto kpu_bn_table = std::make_unique<kpu_batchnorm_argument_t[]>(output_depth);
@@ -324,7 +324,17 @@ inline void DepthwiseConv(
     dma_transmit(dma, (void *)(&kpu->fifo_data_out), outputs.get(), false, true, 8, (layer.dma_parameter.data.dma_total_byte + 8) / 8, 8);
     dma_close(dma);
 
-    {
+    if (stride_width == 2) {
+      for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
+        auto channel_origin = outputs.get() + out_channel * input_height * input_width;
+        for (int out_y = 0; out_y < output_height; ++out_y) {
+          auto y_origin = channel_origin + (out_y * 2 + 1) * input_width;
+          for (int out_x = 0; out_x < output_width; ++out_x) {
+              output_data[Offset(output_shape, batch, out_y, out_x, out_channel)] = y_origin[out_x * 2 + 1];
+          }
+        }
+      }
+    } else {
       uint8_t *o_it = outputs.get();
       for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
         for (int out_y = 0; out_y < output_height; ++out_y) {
@@ -335,7 +345,7 @@ inline void DepthwiseConv(
       }
     }
 #if KPU_DEBUG
-    printk("outputs\n");
+    printk("outputs: %p\n", output_data);
     for (size_t i = 0; i < 64; i++)
         printk("%d ", output_data[i]);
     gettimeofday(&tv2, NULL);
@@ -390,9 +400,10 @@ inline void DepthwiseConv(
       }
     }
 #if KPU_DEBUG
-    printk("outputs\n");
+    printk("outputs: %p\n", output_data);
     for (size_t i = 0; i < 64; i++)
         printk("%d ", output_data[i]);
+    while (1);
 #endif
   }
 #endif
